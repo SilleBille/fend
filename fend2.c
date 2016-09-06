@@ -59,7 +59,8 @@ void read_config_file(char *fileName) {
    { 
       strcpy(f[i].mode, strtok (line," "));
       strcpy(f[i].fileName, strtok (NULL, " "));
-     i++;
+      f[i].fileName[strlen(f[i].fileName)-1] = '\0';
+      i++;
    }
    fclose(fp);  /* close the file prior to exiting the routine */
 
@@ -169,28 +170,28 @@ void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
       // Read only block
 
       for(index=0; index<numberOfEntries; index++) {
-        printf("Matching for: %s\n", f[index].fileName);
-        if(fnmatch(f[index].fileName, str, FNM_PATHNAME) == 0) {
-          printf("matched file name!");
+        /*if(fnmatch(f[index].fileName, str, FNM_PATHNAME) == 0) {
+          printf("matched file name!\n");
            if(f[index].mode[0] == '0')
-              printf("Read not allowed!");
+              printf("Read not allowed!\n");
 
 
+          }
+        }*/
+        int k;
+        int flags=0;
+        glob_t results;
+        glob(f[index].fileName, GLOB_TILDE, NULL, &results);
+        for (k = 0; k < results.gl_pathc; k++) {
+          if(strcmp(results.gl_pathv[k], str) == 0) {
+            if(f[index].mode[0] == '0')
+              printf("No read permission for you!\n");
+          }
         }
-          /*int k;
-          int flags=0;
-          glob_t results;
-
-            //flags |= (index > 1 ? GLOB_APPEND : 0);
-            glob("/README.md", 0, NULL, &results);
-            printf("%d  ",results.gl_pathc);
-            for (k = 0; k < results.gl_pathc; k++)
-              printf("%s\n", results.gl_pathv[k]); */
+  
+        globfree(& results);
       }
-          //globfree(& results);
-
-
-              
+      printf("++++++++++++++++++\n");              
     }
 
     if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_WRONLY) {
