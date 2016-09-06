@@ -13,6 +13,8 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <glob.h>
+#include <fnmatch.h>
 
 struct sandbox {
   pid_t child;
@@ -29,6 +31,11 @@ struct parsed_params {
   int errorCode;
 };
 
+struct files {
+  char mode[4];
+  char fileName[1000];
+}f[1000];
+
 
 void handle_open(struct sandbox *sb, struct user_regs_struct *regs);
 void read_config_file(char *);
@@ -37,12 +44,33 @@ void parse_arguments(int, char **, struct parsed_params *);
 char **argumentsToExec;
 int argumentToExecCount;
 const char *fname = ".fendrc";
+int numberOfEntries = 0;
 
 
 void read_config_file(char *fileName) {
+
+  FILE *fp;
+
+  fp = fopen (fileName, "r");  
+  int i=0;
+  char line[1000];
+  int flags = 0;
+   while(fgets(line, 500, fp) != NULL)
+   { 
+      strcpy(f[i].mode, strtok (line," "));
+      strcpy(f[i].fileName, strtok (NULL, " "));
+     i++;
+   }
+   fclose(fp);  /* close the file prior to exiting the routine */
+
+   numberOfEntries = i;
+
+   /*for(i=0; i< numberOfEntries; i++) {
+      //printf("Values: %s\n",f[i].mode);
+   }*/
    
 }
-
+ 
 void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
   int i, j=0;
   char *configFileName = NULL;
@@ -135,18 +163,43 @@ void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
     str[i] = '\0';
 
     int flag = regs->rsi;
+    int index;
+    
+    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_RDONLY) {
+      // Read only block
+
+      for(index=0; index<numberOfEntries; index++) {
+        printf("Matching for: %s\n", f[index].fileName);
+        if(fnmatch(f[index].fileName, str, FNM_PATHNAME) == 0) {
+          printf("matched file name!");
+           if(f[index].mode[0] == '0')
+              printf("Read not allowed!");
+
+
+        }
+          /*int k;
+          int flags=0;
+          glob_t results;
+
+            //flags |= (index > 1 ? GLOB_APPEND : 0);
+            glob("/README.md", 0, NULL, &results);
+            printf("%d  ",results.gl_pathc);
+            for (k = 0; k < results.gl_pathc; k++)
+              printf("%s\n", results.gl_pathv[k]); */
+      }
+          //globfree(& results);
+
+
+              
+    }
 
     if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_WRONLY) {
-      printf(" write only mode");
-    }
-    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_RDONLY) {
-      printf(" Read only mode");
-    }
-    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_WRONLY) { // 1000 0000
-      printf(" Read and write only mode");
-    }
 
-    //printf("String is: %s\nFLag: %d\n", str, flag); 
+      
+    }
+    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_WRONLY) { 
+      
+    }
 }
 
 
@@ -245,7 +298,7 @@ int main(int argc, char **argv) {
     configFile = params.configFileName;
   }
 
-  printf("The file is: %s\n", configFile);
+  read_config_file(configFile);
 
   sandb_init(&sandb);
   ptrace(PTRACE_SETOPTIONS, sandb.child, 0, PTRACE_O_TRACESYSGOOD);
