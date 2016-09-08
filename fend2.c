@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <glob.h>
 #include <fnmatch.h>
+#include "initheader.h"
 
 #define READ_MODE 0
 #define WRITE_MODE 1
@@ -45,7 +46,7 @@ void handle_open(struct sandbox *sb, struct user_regs_struct *regs);
 void handle_exec(struct sandbox *sb, struct user_regs_struct *regs);
 void read_config_file(char *);
 void parse_arguments(int, char **, struct parsed_params *);
-void handle_no_permission(struct sandbox *sb, char * filePath);
+void handle_no_permission(struct sandbox *sb, char * filePath, struct user_regs_struct *regs);
 void sandb_kill(struct sandbox *, char *);
 
 
@@ -100,8 +101,23 @@ char * getFilePathFromSysCall(pid_t pid, unsigned long long int address) {
     return str;
 }
 
-void handle_no_permission(struct sandbox *sb, char * filePath) {
-    sandb_kill(sb, filePath);
+void handle_no_permission(struct sandbox *sb, char * fileName, struct user_regs_struct *regs) {
+    //sandb_kill(sb, filePath);
+    char cwd[1024];
+    char restrictedFilePath[1024];
+    union u {
+              long int val;
+              char chars;
+    }data;
+    int i=0;
+
+    if(getcwd(cwd, sizeof(cwd)) != NULL) {
+      sprintf(restrictedFilePath, "%s/%s/%s", cwd, "tempfiles", fileName);
+    }
+    for(i=0; i<strlen(restrictedFilePath); i++) {
+      ptrace(PTRACE_POKEDATA, sb->child, regs->rdi + i, restrictedFilePath[i]);
+    }
+    printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, regs->rdi));
 }
  
 void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
@@ -195,23 +211,22 @@ void sandb_kill(struct sandbox *sandb, char *fileName) {
 void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
     
     char *str = getFilePathFromSysCall(sb->child, regs->rdi);
-    printf("String returned: %s\n", str);
     int flag = regs->rsi;
     int index;
     if((flag & 3) == O_RDONLY) {
       // Read only block
       if(hasFilePermission(str, READ_MODE) == 0) 
-        handle_no_permission(sb, str);
+        handle_no_permission(sb, "no_read_file", regs);
     }
 
     if((flag & 3) == O_WRONLY) {
       if(hasFilePermission(str, WRITE_MODE) == 0) 
-        handle_no_permission(sb, str);
+        handle_no_permission(sb, "no_write_file", regs);
       
     }
     if((flag & 3) == O_RDWR) { 
       if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
-        handle_no_permission(sb, str);
+        handle_no_permission(sb, "no_read_file", regs);
     }
 }
 
@@ -310,6 +325,7 @@ int main(int argc, char **argv) {
   }
 
   read_config_file(configFile);
+  create_temp_files();
 
   sandb_init(&sandb);
   ptrace(PTRACE_SETOPTIONS, sandb.child, 0, PTRACE_O_TRACESYSGOOD);
