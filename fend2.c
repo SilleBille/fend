@@ -6,7 +6,7 @@
 #include <sys/user.h>
 #include <asm/ptrace.h>
 #include <sys/wait.h>
-#include <asm/unistd.h>
+#include <syscall.h>
 #include <signal.h>
 #include <string.h>
 #include <errno.h>
@@ -15,6 +15,10 @@
 #include <fcntl.h>
 #include <glob.h>
 #include <fnmatch.h>
+
+#define READ_MODE 0
+#define WRITE_MODE 1
+#define EXECUTE_MODE 2
 
 struct sandbox {
   pid_t child;
@@ -38,8 +42,13 @@ struct files {
 
 
 void handle_open(struct sandbox *sb, struct user_regs_struct *regs);
+void handle_exec(struct sandbox *sb, struct user_regs_struct *regs);
 void read_config_file(char *);
 void parse_arguments(int, char **, struct parsed_params *);
+void handle_no_permission(struct sandbox *sb, char * filePath);
+void sandb_kill(struct sandbox *, char *);
+
+
 
 char **argumentsToExec;
 int argumentToExecCount;
@@ -70,6 +79,29 @@ void read_config_file(char *fileName) {
       //printf("Values: %s\n",f[i].mode);
    }*/
    
+}
+
+char * getFilePathFromSysCall(pid_t pid, unsigned long long int address) {
+  char temp[1000];
+    union u {
+      long int addr;
+      char c;
+    }data;
+
+    int i = 0;
+    while((data.addr = ptrace(PTRACE_PEEKDATA, pid, i + address, NULL)) && data.c != '\0') {
+      temp[i] = data.c;
+      i++;
+    }
+
+    temp[i] = '\0';
+    char *str = (char *) malloc (sizeof(char) * strlen(temp));
+    strcpy(str, temp);
+    return str;
+}
+
+void handle_no_permission(struct sandbox *sb, char * filePath) {
+    sandb_kill(sb, filePath);
 }
  
 void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
@@ -130,7 +162,7 @@ struct sandb_syscall sandb_syscalls[] = {
   {__NR_brk,             NULL},
   {__NR_mmap,            NULL},
   {__NR_access,          NULL},
-  {__NR_open,            handle_open},
+  {SYS_open,            handle_open},
   {__NR_fstat,           NULL},
   {__NR_close,           NULL},
   {__NR_mprotect,        NULL},
@@ -138,71 +170,54 @@ struct sandb_syscall sandb_syscalls[] = {
   {__NR_arch_prctl,      NULL},
   {__NR_exit_group,      NULL},
   {__NR_getdents,        NULL},
-  {__NR_execve,          NULL},
+  {SYS_execve,          handle_exec},
   {__NR_fadvise64,       NULL}
 };
 
-void sandb_kill(struct sandbox *sandb) {
+int hasFilePermission(char * str, int modeValue) {
+  int index;
+  int returnValue =1;
+  for(index=0; index<numberOfEntries; index++) {
+    if(fnmatch(f[index].fileName, str, 0) == 0) {
+       returnValue = (f[index].mode[modeValue] == '0') ? 0: 1;
+    }
+  }  
+  return returnValue;
+}
+
+void sandb_kill(struct sandbox *sandb, char *fileName) {
+  fprintf(stderr, "Terminating %s: unauthorized access of %s\n",sandb->progname, fileName);
   kill(sandb->child, SIGKILL);
   wait(NULL);
   exit(EXIT_FAILURE);
 }
 
 void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
-    char str[1000];
-    union u {
-      long int addr;
-      char c;
-    }data;
-
-    int i = 0;
-    while((data.addr = ptrace(PTRACE_PEEKDATA, sb->child, i + regs->rdi, NULL)) && data.c != '\0') {
-      str[i] = data.c;
-      i++;
-    }
-
-    str[i] = '\0';
-
+    
+    char *str = getFilePathFromSysCall(sb->child, regs->rdi);
+    printf("String returned: %s\n", str);
     int flag = regs->rsi;
     int index;
-    
-    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_RDONLY) {
+    if((flag & 3) == O_RDONLY) {
       // Read only block
-
-      for(index=0; index<numberOfEntries; index++) {
-        /*if(fnmatch(f[index].fileName, str, FNM_PATHNAME) == 0) {
-          printf("matched file name!\n");
-           if(f[index].mode[0] == '0')
-              printf("Read not allowed!\n");
-
-
-          }
-        }*/
-        int k;
-        int flags=0;
-        glob_t results;
-        glob(f[index].fileName, GLOB_TILDE, NULL, &results);
-        for (k = 0; k < results.gl_pathc; k++) {
-          if(strcmp(results.gl_pathv[k], str) == 0) {
-            if(f[index].mode[0] == '0')
-              printf("No read permission for you!\n");
-          }
-        }
-  
-        globfree(& results);
-      }
-      printf("++++++++++++++++++\n");              
+      if(hasFilePermission(str, READ_MODE) == 0) 
+        handle_no_permission(sb, str);
     }
 
-    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_WRONLY) {
-
+    if((flag & 3) == O_WRONLY) {
+      if(hasFilePermission(str, WRITE_MODE) == 0) 
+        handle_no_permission(sb, str);
       
     }
-    if((flag & (O_RDONLY|O_WRONLY|O_RDWR)) == O_WRONLY) { 
-      
+    if((flag & 3) == O_RDWR) { 
+      if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
+        handle_no_permission(sb, str);
     }
 }
 
+void handle_exec(struct sandbox *sb, struct user_regs_struct *regs) {
+  printf("Need to handle execute\n");
+}
 
 void sandb_handle_syscall(struct sandbox *sandb) {
   int i;
@@ -218,11 +233,6 @@ void sandb_handle_syscall(struct sandbox *sandb) {
       return;
     }
   }
-
-  if(regs.orig_rax == -1) {
-    printf("[SANDBOX] Segfault ?! KILLING !!!\n");
-    sandb_kill(sandb);
-  }
 }
 
 void sandb_init(struct sandbox *sandb) {
@@ -231,19 +241,19 @@ void sandb_init(struct sandbox *sandb) {
   pid = fork();
 
   if(pid == -1)
-    err(EXIT_FAILURE, "[SANDBOX] Error on fork:");
+    err(EXIT_FAILURE, "Error on fork:");
 
   if(pid == 0) {
 
     if(ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0)
-      err(EXIT_FAILURE, "[SANDBOX] Failed to PTRACE_TRACEME:");
+      err(EXIT_FAILURE, "Failed to PTRACE_TRACEME:");
 
     if(execv(argumentsToExec[0], argumentsToExec) < 0)
-      err(EXIT_FAILURE, "[SANDBOX] Failed to execv:");
+      err(EXIT_FAILURE, "Failed to execv:");
 
   } else {
     sandb->child = pid;
-    // sandb->progname = argv[0];
+    sandb->progname = argumentsToExec[0];
     wait(NULL);
   }
 }
