@@ -13,8 +13,9 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <fcntl.h>
-#include <glob.h>
 #include <fnmatch.h>
+#include <sys/stat.h>
+#include <sys/reg.h>
 #include "initheader.h"
 
 #define READ_MODE 0
@@ -43,11 +44,14 @@ struct files {
 
 
 void handle_open(struct sandbox *sb, struct user_regs_struct *regs);
+void handle_openat(struct sandbox *sb, struct user_regs_struct *regs);
+void handle_rename(struct sandbox *sb, struct user_regs_struct *regs);
 void handle_exec(struct sandbox *sb, struct user_regs_struct *regs);
 void read_config_file(char *);
 void parse_arguments(int, char **, struct parsed_params *);
-void handle_no_permission(struct sandbox *sb, char * filePath, struct user_regs_struct *regs);
+void handle_no_permission(struct sandbox *sb, char * filePath, unsigned long long address);
 void sandb_kill(struct sandbox *, char *);
+int isDirectory(const char *path);
 
 
 
@@ -69,17 +73,39 @@ void read_config_file(char *fileName) {
    { 
       strcpy(f[i].mode, strtok (line," "));
       strcpy(f[i].fileName, strtok (NULL, " "));
-      f[i].fileName[strlen(f[i].fileName)-1] = '\0';
+      int length = strlen(f[i].fileName);
+
+      f[i].fileName[length-1] = '\0';
+
+      // length value decreases by 1;
+      /*length = strlen(f[i].fileName);
+
+      if(f[i].fileName[length-1] == '/') {
+        f[i].fileName[length] = '*';
+        f[i].fileName[length+1] = '\0';
+      }*/
+      /*if(isDirectory(f[i].fileName)) {
+        strcpy(f[i+1].fileName, f[i].fileName);
+        length = strlen(f[i+1].fileName);
+        if(f[i+1].fileName[length-1] == '/') {
+          f[i+1].fileName[length] = '*';
+          f[i+1].fileName[length+1] = '\0';
+        } else {
+          f[i+1].fileName[length] = '/';
+          f[i+1].fileName[length+1] = '*';
+          f[i+1].fileName[length+2] = '\0';
+        }
+        strcpy(f[i+1].mode, f[i].mode);
+        i++;
+      }*/
       i++;
    }
    fclose(fp);  /* close the file prior to exiting the routine */
-
-   numberOfEntries = i;
-
-   /*for(i=0; i< numberOfEntries; i++) {
-      //printf("Values: %s\n",f[i].mode);
+    int j=0;
+   /*for(j=0; j<i; j++) {
+      printf("Entries are: %s\n", f[j].fileName);
    }*/
-   
+   numberOfEntries = i;
 }
 
 char * getFilePathFromSysCall(pid_t pid, unsigned long long int address) {
@@ -101,7 +127,7 @@ char * getFilePathFromSysCall(pid_t pid, unsigned long long int address) {
     return str;
 }
 
-void handle_no_permission(struct sandbox *sb, char * fileName, struct user_regs_struct *regs) {
+void handle_no_permission(struct sandbox *sb, char * fileName, unsigned long long address) {
     //sandb_kill(sb, filePath);
     char cwd[1024];
     char restrictedFilePath[1024];
@@ -110,14 +136,11 @@ void handle_no_permission(struct sandbox *sb, char * fileName, struct user_regs_
               char chars;
     }data;
     int i=0;
-
-    if(getcwd(cwd, sizeof(cwd)) != NULL) {
-      sprintf(restrictedFilePath, "%s/%s/%s", cwd, "tempfiles", fileName);
-    }
+    sprintf(restrictedFilePath, "%s/%s", "/tmp/tempfiles", fileName);
     for(i=0; i<strlen(restrictedFilePath); i++) {
-      ptrace(PTRACE_POKEDATA, sb->child, regs->rdi + i, restrictedFilePath[i]);
+      ptrace(PTRACE_POKEDATA, sb->child, address + i, restrictedFilePath[i]);
     }
-    printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, regs->rdi));
+    printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, address));
 }
  
 void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
@@ -172,7 +195,7 @@ void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
 }
 
 struct sandb_syscall sandb_syscalls[] = {
-  {__NR_read,            NULL},
+  {SYS_rename,            handle_rename},
   {__NR_write,           NULL},
   {__NR_exit,            NULL},
   {__NR_brk,             NULL},
@@ -187,17 +210,25 @@ struct sandb_syscall sandb_syscalls[] = {
   {__NR_exit_group,      NULL},
   {__NR_getdents,        NULL},
   {SYS_execve,          handle_exec},
-  {__NR_fadvise64,       NULL}
+  {__NR_fadvise64,       NULL},
+  {SYS_openat,           handle_openat}
 };
+int isDirectory(const char *path) {
+   struct stat statbuf;
+   if (stat(path, &statbuf) != 0)
+       return 0;
+   return S_ISDIR(statbuf.st_mode);
+}
 
 int hasFilePermission(char * str, int modeValue) {
   int index;
   int returnValue =1;
   for(index=0; index<numberOfEntries; index++) {
-    if(fnmatch(f[index].fileName, str, 0) == 0) {
+    if(fnmatch(f[index].fileName, str, FNM_NOESCAPE|FNM_PATHNAME) == 0) {
        returnValue = (f[index].mode[modeValue] == '0') ? 0: 1;
     }
-  }  
+  } 
+  //printf("returning value : %d for mode: %d path: %s\n", returnValue, modeValue, str); 
   return returnValue;
 }
 
@@ -209,25 +240,96 @@ void sandb_kill(struct sandbox *sandb, char *fileName) {
 }
 
 void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
-    
     char *str = getFilePathFromSysCall(sb->child, regs->rdi);
     int flag = regs->rsi;
     int index;
-    if((flag & 3) == O_RDONLY) {
+    if((flag & 1) == O_RDONLY) {
       // Read only block
+      //printf("Read only for: %s-------\n", str);
       if(hasFilePermission(str, READ_MODE) == 0) 
-        handle_no_permission(sb, "no_read_file", regs);
+        handle_no_permission(sb, "no_read_file", regs->rdi);
     }
 
-    if((flag & 3) == O_WRONLY) {
-      if(hasFilePermission(str, WRITE_MODE) == 0) 
-        handle_no_permission(sb, "no_write_file", regs);
+    if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
+      // printf("write and create only...\n");
+      if(hasFilePermission(str, WRITE_MODE) == 0)  {
+        handle_no_permission(sb, "no_write_directory/write_protected.txt", regs->rdi);
+      }
       
     }
-    if((flag & 3) == O_RDWR) { 
+    if((flag & 2)== O_RDWR) { 
+      // printf("Read and write...\n");
       if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
-        handle_no_permission(sb, "no_read_file", regs);
+        handle_no_permission(sb, "no_write_file", regs->rdi);
     }
+    //ptrace(PTRACE_SETREGS, sb->child, NULL, &regs);
+}
+
+void handle_openat(struct sandbox *sb, struct user_regs_struct *regs) {
+    
+    char *str = getFilePathFromSysCall(sb->child, regs->rsi);
+    if(isDirectory(str)) {
+      if(str[strlen(str)-1] != '/') {
+        str[strlen(str)] = '/';
+        str[strlen(str) +1] = '\0';
+      }
+    }
+    //printf("The string for openat from REGISTRY: %s\n", str);
+
+    int flag = regs->rdx;
+    int index;
+    // direcotry flag enabled
+    if((flag & 65536) == O_DIRECTORY) {
+      //printf("Direcotyr...\n");
+      if((flag & 1) == O_RDONLY) {
+        if((hasFilePermission(str, READ_MODE)) == 0 || (hasFilePermission(str, EXECUTE_MODE)) == 0) {
+          //printf("No Read...\n");
+          handle_no_permission(sb, "no_read_directory/", regs->rsi); 
+        }
+      }
+
+      if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
+        // printf("write and create only...\n");
+        if(hasFilePermission(str, WRITE_MODE) == 0 || (hasFilePermission(str, EXECUTE_MODE)) == 0)  {
+          printf("No Write...\n");
+          handle_no_permission(sb, "no_write_directory", regs->rsi);
+        }
+        
+      }
+      if((flag & 2)== O_RDWR) { 
+        // printf("Read and write...\n");
+        if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
+          handle_no_permission(sb, "no_read_directory", regs->rsi);
+      }
+    } else {
+      // Directory flag disabled...
+      if((flag & 1) == O_RDONLY) {
+        // Read only block
+        // printf("Read only...\n");
+        if(hasFilePermission(str, READ_MODE) == 0) 
+          handle_no_permission(sb, "no_read_file", regs->rsi);
+      }
+
+      if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
+        // printf("write and create only...\n");
+        if(hasFilePermission(str, WRITE_MODE) == 0)  {
+          handle_no_permission(sb, "no_write_file", regs->rsi);
+        }
+        
+      }
+      if((flag & 2)== O_RDWR) { 
+        // printf("Read and write...\n");
+        if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
+          handle_no_permission(sb, "no_read_file", regs->rsi);
+      }
+    }
+
+    // ptrace(PTRACE_SETREGS, sb->child, &regs);
+    
+}
+
+void handle_rename(struct sandbox *sb, struct user_regs_struct *regs) {
+
 }
 
 void handle_exec(struct sandbox *sb, struct user_regs_struct *regs) {
@@ -280,9 +382,19 @@ int wait_for_syscall(pid_t child) {
         waitpid(child, &status, 0);
          if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80)
             return 0;
-
-         if (WIFEXITED(status))
+        else if(WIFSTOPPED(status) && WSTOPSIG(status)) {
             return 1;
+        }
+        if (WIFEXITED(status)) {
+          return 1;
+        }
+        /*if(WIFSIGNALED(status)) {
+          return 1;
+        }
+
+        if(WCOREDUMP(status) ) {
+           return 1;
+        }*/
     }
 }
 
@@ -291,12 +403,18 @@ void sandb_run(struct sandbox *sandb) {
   while(1) {
     // Before executing the syscall. 
     if(wait_for_syscall(sandb->child) != 0) break;
+    /*int syscall = ptrace(PTRACE_PEEKUSER, sandb->child, 8*ORIG_RAX, NULL);
+    fprintf(stderr, "syscall(%d) = ", syscall);*/
+
 
     // Do the necessary handling
     sandb_handle_syscall(sandb);
 
     // After executing the syscall. Monitor the return value
     if(wait_for_syscall(sandb -> child) != 0) break;
+   
+ /*   int retval = ptrace(PTRACE_PEEKUSER, sandb->child, 8*RAX, NULL);
+    fprintf(stderr, "%d\n", retval);*/
 
     // I can get the return values
   }
