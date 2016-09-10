@@ -4,8 +4,8 @@
 # clean: 
 # 	rm -f fend.o*
 
-all: 
-	gcc fend2.c -o fend
+all: fend2.c initializer.c initheader.h
+	gcc fend2.c initializer.c -o fend
 
 clean:
 	rm *.o
