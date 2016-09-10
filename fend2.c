@@ -224,7 +224,7 @@ int hasFilePermission(char * str, int modeValue) {
   int index;
   int returnValue =1;
   for(index=0; index<numberOfEntries; index++) {
-    if(fnmatch(f[index].fileName, str, FNM_NOESCAPE|FNM_PATHNAME) == 0) {
+    if(fnmatch(f[index].fileName, str, FNM_NOESCAPE) == 0) {
        returnValue = (f[index].mode[modeValue] == '0') ? 0: 1;
     }
   } 
