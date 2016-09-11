@@ -43,12 +43,11 @@ struct files {
 }f[1000];
 
 void handle_open(struct sandbox *sb, unsigned long long dataAddr, unsigned long long flagAddress);
-// void handle_openat(struct sandbox *sb, struct user_regs_struct *regs);
-void handle_rename(struct sandbox *sb, struct user_regs_struct *regs);
 void handle_exec(struct sandbox *sb, struct user_regs_struct *regs);
 void read_config_file(char *);
 void parse_arguments(int, char **, struct parsed_params *);
 void handle_no_permission(struct sandbox *sb, int modeToHandle, unsigned long long address);
+void handle_no_permission_for_exec(struct sandbox *sb, int modeToHandle, unsigned long long address);
 void sandb_kill(struct sandbox *, char *);
 int isDirectory(const char *path);
 
@@ -76,13 +75,6 @@ void read_config_file(char *fileName) {
 
       f[i].fileName[length-1] = '\0';
 
-      // length value decreases by 1;
-      /*length = strlen(f[i].fileName);
-
-      if(f[i].fileName[length-1] == '/') {
-        f[i].fileName[length] = '*';
-        f[i].fileName[length+1] = '\0';
-      }*/
       if(isDirectory(f[i].fileName)) {
         length = strlen(f[i].fileName);
         if(f[i].fileName[length-1] != '/') {
@@ -129,7 +121,19 @@ void handle_no_permission(struct sandbox *sb, int modeToHandle, unsigned long lo
     for(i=0; i<strlen(restrictedFilePath); i++) {
       ptrace(PTRACE_POKEDATA, sb->child, address + i, restrictedFilePath[i]);
     }
-    printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, address));
+    //printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, address));
+}
+
+void handle_no_permission_for_exec(struct sandbox *sb, int modeToHandle, unsigned long long address) {
+    //sandb_kill(sb, filePath);
+    char cwd[1024];
+    char *fileName = create_temp_files(modeToHandle);
+    int i=0;
+    for(i=0; i<strlen(fileName); i++) {
+      ptrace(PTRACE_POKEDATA, sb->child, address + i, fileName[i]);
+    }
+    //fprintf(stderr, "bash: /tmp/tempfiles/%s: Permission denied", fileName);
+    // printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, address));
 }
  
 void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
@@ -183,25 +187,7 @@ void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
   }   
 }
 
-/*struct sandb_syscall sandb_syscalls[] = {
-  {SYS_rename,            handle_rename},
-  {__NR_write,           NULL},
-  {__NR_exit,            NULL},
-  {__NR_brk,             NULL},
-  {__NR_mmap,            NULL},
-  {__NR_access,          NULL},
-  {SYS_open,            handle_open},
-  {__NR_fstat,           NULL},
-  {__NR_close,           NULL},
-  {__NR_mprotect,        NULL},
-  {__NR_munmap,          NULL},
-  {__NR_arch_prctl,      NULL},
-  {__NR_exit_group,      NULL},
-  {__NR_getdents,        NULL},
-  {SYS_execve,          handle_exec},
-  {__NR_fadvise64,       NULL},
-  {SYS_openat,           handle_openat}
-};*/
+
 int isDirectory(const char *path) {
    struct stat statbuf;
    if (stat(path, &statbuf) != 0)
@@ -227,32 +213,6 @@ void sandb_kill(struct sandbox *sandb, char *fileName) {
   wait(NULL);
   exit(EXIT_FAILURE);
 }
-
-/*void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
-    char *str = getFilePathFromSysCall(sb->child, regs->rdi);
-    int flag = regs->rsi;
-    int index;
-    if((flag & 1) == O_RDONLY) {
-      // Read only block
-      //printf("Read only for: %s-------\n", str);
-      if(hasFilePermission(str, READ_MODE) == 0) 
-        handle_no_permission(sb, "no_read_file", regs->rdi);
-    }
-
-    if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
-      // printf("write and create only...\n");
-      if(hasFilePermission(str, WRITE_MODE) == 0)  {
-        handle_no_permission(sb, "no_write_directory/write_protected.txt", regs->rdi);
-      }
-      
-    }
-    if((flag & 2)== O_RDWR) { 
-      // printf("Read and write...\n");
-      if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
-        handle_no_permission(sb, "no_write_file", regs->rdi);
-    }
-    //ptrace(PTRACE_SETREGS, sb->child, NULL, &regs);
-}*/
 
 void handle_open(struct sandbox *sb, unsigned long long dataAddr, unsigned long long flagAddress) {
     
@@ -369,17 +329,7 @@ void handle_open(struct sandbox *sb, unsigned long long dataAddr, unsigned long 
           }
       }
     }
-
-    // ptrace(PTRACE_SETREGS, sb->child, &regs);
     
-}
-
-void handle_rename(struct sandbox *sb, struct user_regs_struct *regs) {
-
-}
-
-void handle_exec(struct sandbox *sb, struct user_regs_struct *regs) {
-  printf("Need to handle execute\n");
 }
 
 void sandb_handle_syscall(struct sandbox *sandb) {
@@ -393,22 +343,48 @@ void sandb_handle_syscall(struct sandbox *sandb) {
 
     case SYS_open: {
       handle_open(sandb, regs.rdi, regs.rsi);
+      break;
     }
-              break;
+              
     case SYS_openat: {
       handle_open(sandb, regs.rsi, regs.rdx);
+      break;
     }
-              break;
+              
+    case SYS_execve: {
+      char *str = getFilePathFromSysCall(sandb->child, regs.rdi);
+      union u {
+        long int addr;
+        long int addr2[8];
+      }data;
+
+      data.addr = ptrace(PTRACE_PEEKDATA, sandb->child, regs.rsi, NULL);
+      char *arg = getFilePathFromSysCall(sandb->child, data.addr2[0]);
+      
+      printf ("Argument: %s\n", arg);
+      if(strcmp(str, sandb->progname) != 0) {
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            // printf("No permissions at all...\n");
+            handle_no_permission(sandb, NO_PERM_FILE, regs.rdi); 
+            handle_no_permission(sandb, NO_PERM_FILE, data.addr2[0]);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            // printf("No permissions at all...\n");
+            handle_no_permission(sandb, READ_ONLY_FILE, regs.rdi);
+            handle_no_permission(sandb, READ_ONLY_FILE, data.addr2[0]);
+          } else if(hasFilePermission(str, EXECUTE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
+            handle_no_permission(sandb, WRITE_ONLY_FILE, regs.rdi);
+            handle_no_permission(sandb, WRITE_ONLY_FILE, data.addr2[0]);
+          } else if(hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sandb, READ_WRITE_FILE, regs.rdi);
+            handle_no_permission(sandb, READ_WRITE_FILE, data.addr2[0]);
+          } 
+      }
+      break;
+    }
+
     default:
             return;
   }
-  /*for(i = 0; i < sizeof(sandb_syscalls)/sizeof(*sandb_syscalls); i++) {
-    if(regs.orig_rax == sandb_syscalls[i].syscall) {
-      if(sandb_syscalls[i].callback != NULL)
-        sandb_syscalls[i].callback(sandb, &regs);
-      return;
-    }
-  }*/
 }
 
 void sandb_init(struct sandbox *sandb) {
@@ -447,13 +423,6 @@ int wait_for_syscall(pid_t child) {
         if (WIFEXITED(status)) {
           return 1;
         }
-        /*if(WIFSIGNALED(status)) {
-          return 1;
-        }
-
-        if(WCOREDUMP(status) ) {
-           return 1;
-        }*/
     }
 }
 
@@ -462,8 +431,8 @@ void sandb_run(struct sandbox *sandb) {
   while(1) {
     // Before executing the syscall. 
     if(wait_for_syscall(sandb->child) != 0) break;
-    /*int syscall = ptrace(PTRACE_PEEKUSER, sandb->child, 8*ORIG_RAX, NULL);
-    fprintf(stderr, "syscall(%d) = ", syscall);*/
+    int syscall = ptrace(PTRACE_PEEKUSER, sandb->child, 8*ORIG_RAX, NULL);
+    fprintf(stderr, "syscall(%d) = ", syscall);
 
 
     // Do the necessary handling
@@ -472,8 +441,8 @@ void sandb_run(struct sandbox *sandb) {
     // After executing the syscall. Monitor the return value
     if(wait_for_syscall(sandb -> child) != 0) break;
    
- /*   int retval = ptrace(PTRACE_PEEKUSER, sandb->child, 8*RAX, NULL);
-    fprintf(stderr, "%d\n", retval);*/
+    int retval = ptrace(PTRACE_PEEKUSER, sandb->child, 8*RAX, NULL);
+    fprintf(stderr, "%d\n", retval);
 
     // I can get the return values
   }
@@ -508,6 +477,6 @@ int main(int argc, char **argv) {
   ptrace(PTRACE_SETOPTIONS, sandb.child, 0, PTRACE_O_TRACESYSGOOD);
   
   sandb_run(&sandb);
-  clean();
+  //clean();
   return EXIT_SUCCESS;
 }
