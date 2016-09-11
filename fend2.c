@@ -42,14 +42,13 @@ struct files {
   char fileName[1000];
 }f[1000];
 
-
-void handle_open(struct sandbox *sb, struct user_regs_struct *regs);
-void handle_openat(struct sandbox *sb, struct user_regs_struct *regs);
+void handle_open(struct sandbox *sb, unsigned long long dataAddr, unsigned long long flagAddress);
+// void handle_openat(struct sandbox *sb, struct user_regs_struct *regs);
 void handle_rename(struct sandbox *sb, struct user_regs_struct *regs);
 void handle_exec(struct sandbox *sb, struct user_regs_struct *regs);
 void read_config_file(char *);
 void parse_arguments(int, char **, struct parsed_params *);
-void handle_no_permission(struct sandbox *sb, char * filePath, unsigned long long address);
+void handle_no_permission(struct sandbox *sb, int modeToHandle, unsigned long long address);
 void sandb_kill(struct sandbox *, char *);
 int isDirectory(const char *path);
 
@@ -84,20 +83,13 @@ void read_config_file(char *fileName) {
         f[i].fileName[length] = '*';
         f[i].fileName[length+1] = '\0';
       }*/
-      /*if(isDirectory(f[i].fileName)) {
-        strcpy(f[i+1].fileName, f[i].fileName);
-        length = strlen(f[i+1].fileName);
-        if(f[i+1].fileName[length-1] == '/') {
-          f[i+1].fileName[length] = '*';
-          f[i+1].fileName[length+1] = '\0';
-        } else {
-          f[i+1].fileName[length] = '/';
-          f[i+1].fileName[length+1] = '*';
-          f[i+1].fileName[length+2] = '\0';
+      if(isDirectory(f[i].fileName)) {
+        length = strlen(f[i].fileName);
+        if(f[i].fileName[length-1] != '/') {
+          f[i].fileName[length] = '/';
+          f[i].fileName[length+1] = '\0';
         }
-        strcpy(f[i+1].mode, f[i].mode);
-        i++;
-      }*/
+      }
       i++;
    }
    fclose(fp);  /* close the file prior to exiting the routine */
@@ -127,14 +119,11 @@ char * getFilePathFromSysCall(pid_t pid, unsigned long long int address) {
     return str;
 }
 
-void handle_no_permission(struct sandbox *sb, char * fileName, unsigned long long address) {
+void handle_no_permission(struct sandbox *sb, int modeToHandle, unsigned long long address) {
     //sandb_kill(sb, filePath);
     char cwd[1024];
     char restrictedFilePath[1024];
-    union u {
-              long int val;
-              char chars;
-    }data;
+    char *fileName = create_temp_files(modeToHandle);
     int i=0;
     sprintf(restrictedFilePath, "%s/%s", "/tmp/tempfiles", fileName);
     for(i=0; i<strlen(restrictedFilePath); i++) {
@@ -194,7 +183,7 @@ void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
   }   
 }
 
-struct sandb_syscall sandb_syscalls[] = {
+/*struct sandb_syscall sandb_syscalls[] = {
   {SYS_rename,            handle_rename},
   {__NR_write,           NULL},
   {__NR_exit,            NULL},
@@ -212,7 +201,7 @@ struct sandb_syscall sandb_syscalls[] = {
   {SYS_execve,          handle_exec},
   {__NR_fadvise64,       NULL},
   {SYS_openat,           handle_openat}
-};
+};*/
 int isDirectory(const char *path) {
    struct stat statbuf;
    if (stat(path, &statbuf) != 0)
@@ -224,7 +213,7 @@ int hasFilePermission(char * str, int modeValue) {
   int index;
   int returnValue =1;
   for(index=0; index<numberOfEntries; index++) {
-    if(fnmatch(f[index].fileName, str, FNM_NOESCAPE) == 0) {
+    if(fnmatch(f[index].fileName, str, FNM_NOESCAPE|FNM_PATHNAME) == 0) {
        returnValue = (f[index].mode[modeValue] == '0') ? 0: 1;
     }
   } 
@@ -239,7 +228,7 @@ void sandb_kill(struct sandbox *sandb, char *fileName) {
   exit(EXIT_FAILURE);
 }
 
-void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
+/*void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
     char *str = getFilePathFromSysCall(sb->child, regs->rdi);
     int flag = regs->rsi;
     int index;
@@ -263,11 +252,11 @@ void handle_open(struct sandbox *sb, struct user_regs_struct *regs) {
         handle_no_permission(sb, "no_write_file", regs->rdi);
     }
     //ptrace(PTRACE_SETREGS, sb->child, NULL, &regs);
-}
+}*/
 
-void handle_openat(struct sandbox *sb, struct user_regs_struct *regs) {
+void handle_open(struct sandbox *sb, unsigned long long dataAddr, unsigned long long flagAddress) {
     
-    char *str = getFilePathFromSysCall(sb->child, regs->rsi);
+    char *str = getFilePathFromSysCall(sb->child, dataAddr);
     if(isDirectory(str)) {
       if(str[strlen(str)-1] != '/') {
         str[strlen(str)] = '/';
@@ -276,51 +265,108 @@ void handle_openat(struct sandbox *sb, struct user_regs_struct *regs) {
     }
     //printf("The string for openat from REGISTRY: %s\n", str);
 
-    int flag = regs->rdx;
+    int flag = flagAddress;
     int index;
-    // direcotry flag enabled
+    // directory flag enabled
     if((flag & 65536) == O_DIRECTORY) {
-      //printf("Direcotyr...\n");
-      if((flag & 1) == O_RDONLY) {
-        if((hasFilePermission(str, READ_MODE)) == 0 || (hasFilePermission(str, EXECUTE_MODE)) == 0) {
-          //printf("No Read...\n");
-          handle_no_permission(sb, "no_read_directory/", regs->rsi); 
+        //printf("Direcotyr...\n");
+        if((flag & 1) == O_RDONLY) {
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions at all...\n");
+            handle_no_permission(sb, NO_PERM_DIRECTORY, dataAddr); 
+          } else if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions for read and execute...\n");
+            handle_no_permission(sb, WRITE_ONLY_DIRECTORY, dataAddr); 
+          } else if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0) {
+            //printf("No permissions for read and execute...\n");
+            handle_no_permission(sb, EXECUTE_ONLY_DIRECTORY, dataAddr); 
+          } else if((hasFilePermission(str, READ_MODE)) == 0) {
+            //printf("No permissions for read and execute...\n");
+            handle_no_permission(sb, WRITE_EXECUTE_DIRECTORY, dataAddr); 
+          }
         }
-      }
 
-      if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
-        // printf("write and create only...\n");
-        if(hasFilePermission(str, WRITE_MODE) == 0 || (hasFilePermission(str, EXECUTE_MODE)) == 0)  {
-          printf("No Write...\n");
-          handle_no_permission(sb, "no_write_directory", regs->rsi);
+        if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
+          // printf("write and create only...\n");
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions at all...\n");
+            handle_no_permission(sb, NO_PERM_DIRECTORY, dataAddr); 
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sb, READ_ONLY_DIRECTORY, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
+            handle_no_permission(sb, EXECUTE_ONLY_DIRECTORY, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
+            handle_no_permission(sb, READ_EXECUTE_DIRECTORY, dataAddr);
+          } 
+          
         }
-        
-      }
-      if((flag & 2)== O_RDWR) { 
-        // printf("Read and write...\n");
-        if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
-          handle_no_permission(sb, "no_read_directory", regs->rsi);
-      }
+        if((flag & 2)== O_RDWR) { 
+          // printf("Read and write...\n");
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions at all...\n");
+            handle_no_permission(sb, NO_PERM_DIRECTORY, dataAddr); 
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sb, READ_ONLY_DIRECTORY, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
+            handle_no_permission(sb, EXECUTE_ONLY_DIRECTORY, dataAddr);
+          } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sb, WRITE_ONLY_DIRECTORY, dataAddr);
+          } else if(hasFilePermission(str, READ_MODE) == 0) {
+            handle_no_permission(sb, WRITE_EXECUTE_DIRECTORY, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0) {
+            handle_no_permission(sb, READ_EXECUTE_DIRECTORY, dataAddr);
+          }
+        }
     } else {
       // Directory flag disabled...
       if((flag & 1) == O_RDONLY) {
         // Read only block
         // printf("Read only...\n");
-        if(hasFilePermission(str, READ_MODE) == 0) 
-          handle_no_permission(sb, "no_read_file", regs->rsi);
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions at all...\n");
+            handle_no_permission(sb, NO_PERM_FILE, dataAddr); 
+          } else if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions for read and execute...\n");
+            handle_no_permission(sb, WRITE_ONLY_FILE, dataAddr); 
+          } else if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0) {
+            //printf("No permissions for read and execute...\n");
+            handle_no_permission(sb, EXECUTE_ONLY_FILE, dataAddr); 
+          } else if((hasFilePermission(str, READ_MODE)) == 0) {
+            //printf("No permissions for read and execute...\n");
+            handle_no_permission(sb, WRITE_EXECUTE_FILE, dataAddr); 
+          }
       }
 
       if((flag & 1) == O_WRONLY || (flag & 64)== O_CREAT) {
         // printf("write and create only...\n");
-        if(hasFilePermission(str, WRITE_MODE) == 0)  {
-          handle_no_permission(sb, "no_write_file", regs->rsi);
-        }
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions at all...\n");
+            handle_no_permission(sb, NO_PERM_FILE, dataAddr); 
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sb, READ_ONLY_FILE, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
+            handle_no_permission(sb, EXECUTE_ONLY_FILE, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
+            handle_no_permission(sb, READ_EXECUTE_FILE, dataAddr);
+          } 
         
       }
       if((flag & 2)== O_RDWR) { 
         // printf("Read and write...\n");
-        if(((hasFilePermission(str, WRITE_MODE)) == 0) || (hasFilePermission(str, READ_MODE)) == 0)
-          handle_no_permission(sb, "no_read_file", regs->rsi);
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            //printf("No permissions at all...\n");
+            handle_no_permission(sb, NO_PERM_FILE, dataAddr); 
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sb, READ_ONLY_FILE, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
+            handle_no_permission(sb, EXECUTE_ONLY_FILE, dataAddr);
+          } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            handle_no_permission(sb, WRITE_ONLY_FILE, dataAddr);
+          } else if(hasFilePermission(str, READ_MODE) == 0) {
+            handle_no_permission(sb, WRITE_EXECUTE_FILE, dataAddr);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0) {
+            handle_no_permission(sb, READ_EXECUTE_FILE, dataAddr);
+          }
       }
     }
 
@@ -343,13 +389,26 @@ void sandb_handle_syscall(struct sandbox *sandb) {
   if(ptrace(PTRACE_GETREGS, sandb->child, NULL, &regs) < 0)
     err(EXIT_FAILURE, "[SANDBOX] Failed to PTRACE_GETREGS:");
 
-  for(i = 0; i < sizeof(sandb_syscalls)/sizeof(*sandb_syscalls); i++) {
+  switch(regs.orig_rax) {
+
+    case SYS_open: {
+      handle_open(sandb, regs.rdi, regs.rsi);
+    }
+              break;
+    case SYS_openat: {
+      handle_open(sandb, regs.rsi, regs.rdx);
+    }
+              break;
+    default:
+            return;
+  }
+  /*for(i = 0; i < sizeof(sandb_syscalls)/sizeof(*sandb_syscalls); i++) {
     if(regs.orig_rax == sandb_syscalls[i].syscall) {
       if(sandb_syscalls[i].callback != NULL)
         sandb_syscalls[i].callback(sandb, &regs);
       return;
     }
-  }
+  }*/
 }
 
 void sandb_init(struct sandbox *sandb) {
@@ -443,12 +502,12 @@ int main(int argc, char **argv) {
   }
 
   read_config_file(configFile);
-  create_temp_files();
+  
 
   sandb_init(&sandb);
   ptrace(PTRACE_SETOPTIONS, sandb.child, 0, PTRACE_O_TRACESYSGOOD);
   
   sandb_run(&sandb);
-
+  clean();
   return EXIT_SUCCESS;
 }
