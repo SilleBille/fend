@@ -50,7 +50,6 @@ void parse_arguments(int, char **, struct parsed_params *);
 void handle_no_permission(struct sandbox *sb, int modeToHandle, unsigned long long address);
 void handle_no_permission_directory(struct sandbox *sb, int modeToHandle, unsigned long long address, int);
 void sandb_kill(struct sandbox *, char *);
-int isDirectory(const char *path);
 
 
 
@@ -74,28 +73,16 @@ void read_config_file(char *fileName) {
       strcpy(f[i].fileName, strtok (NULL, " "));
       int length = strlen(f[i].fileName);
 
-      f[i].fileName[length-1] = '\0';
-
-      /*if(isDirectory(f[i].fileName)) {
-        length = strlen(f[i].fileName);
-        if(f[i].fileName[length-1] != '/') {
-          f[i].fileName[length] = '/';
-          f[i].fileName[length+1] = '\0';
-        }
-      }*/
-      if(isDirectory(f[i].fileName)) {
-        length = strlen(f[i].fileName);
-        if(f[i].fileName[length-1] == '/') {
-          f[i].fileName[length-1] = '\0';
-        }
+      f[i].fileName[length-1] = '\0';      
+      length = strlen(f[i].fileName);
+      if(f[i].fileName[length-1] == '/') {
+        f[i].fileName[length-1] = '\0';
       }
+      
       i++;
    }
    fclose(fp);  /* close the file prior to exiting the routine */
     int j=0;
-   /*for(j=0; j<i; j++) {
-      printf("Entries are: %s\n", f[j].fileName);
-   }*/
    numberOfEntries = i;
 }
 
@@ -158,50 +145,6 @@ void handle_no_permission_directory(struct sandbox *sb, int modeToHandle, unsign
     }
     // printf("New registry value: %s\n", getFilePathFromSysCall(sb->child, address));
 }
-
-/*void handle_no_permission_for_exec(struct sandbox *sb, int modeToHandle, unsigned long long address) {
-    //sandb_kill(sb, filePath);
-    char cwd[1024];
-    char *fileName = create_temp_files(modeToHandle);
-    printf("File name returned from funct : %s\n", fileName);
-    int i=0;
-    union aa {
-      long int addr;
-      char c[8];
-    }data;
-
-    union u {
-            long val;
-            char chars[9];
-    }insert;
-
-    for(i=0; i<strlen(fileName)/8; i++) {
-      memcpy(insert.chars, fileName, 8);
-      insert.chars[7] = '\0';
-      data.addr = ptrace(PTRACE_PEEKDATA, sb->child, address +i*8, NULL);
-      printf("going to replace: %s with %s\n", data.c, insert.chars);
-      ptrace(PTRACE_POKEDATA, sb->child, address + i*8, insert.val);
-      fileName += 8;
-    }
-    int j=strlen(fileName) % 8;
-    if(j != 0) {
-        memcpy(insert.chars, fileName, j);
-        data.addr = ptrace(PTRACE_PEEKDATA, sb->child, address +i*8, NULL);
-        insert.chars[j] = '\0';
-        printf("going to replace: %s with %s\n", data.c, insert.chars);
-        ptrace(PTRACE_POKEDATA, sb->child, address + i * 8, insert.val);
-        ptrace(PTRACE_POKEDATA, sb->child, address + (i * 8) + j, '\0');
-    }
-    for(i=0; i<strlen(fileName); i++) {
-      data.addr = ptrace(PTRACE_PEEKDATA, sb->child, i + address, NULL);
-      printf("Going to replace: %ld\n", data.addr);
-      ptrace(PTRACE_POKEDATA, sb->child, address + i, fileName[i]);
-      data.addr = ptrace(PTRACE_PEEKDATA, sb->child, address+i, NULL);
-      printf("replaced with: %c\n", data.c);
-    } 
-    printf("The new path is: %s\n", getFilePathFromSysCall(sb->child, address));
-    ptrace(PTRACE_POKEDATA, sb->child, address + 7, '\0');
-}*/
  
 void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
   int i, j=0;
@@ -254,14 +197,6 @@ void parse_arguments(int argc, char *rawArgs[], struct parsed_params *pparams) {
   }   
 }
 
-
-int isDirectory(const char *path) {
-   struct stat statbuf;
-   if (stat(path, &statbuf) != 0)
-       return 0;
-   return S_ISDIR(statbuf.st_mode);
-}
-
 int hasFilePermission(char * str, int modeValue) {
   int index;
   int returnValue =1;
@@ -284,18 +219,12 @@ void sandb_kill(struct sandbox *sandb, char *fileName) {
 void handle_open(struct sandbox *sb, unsigned long long dataAddr, unsigned long long flagAddress) {
     
     char *str = getFilePathFromSysCall(sb->child, dataAddr);
-    /*if(isDirectory(str)) {
-      if(str[strlen(str)-1] != '/') {
-        str[strlen(str)] = '/';
-        str[strlen(str) +1] = '\0';
-      }
-    }*/
+    
     int length = strlen(str);
-    if(isDirectory(str)) {
-      if(str[length-1] == '/') {
-        str[length-1] = '\0';
-      }
+    if(str[length-1] == '/') {
+      str[length-1] = '\0';
     }
+    
     // printf("The string for open from REGISTRY: %s\n", str);
 
     int flag = flagAddress;
