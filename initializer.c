@@ -12,22 +12,22 @@ int permissionBits[16] = {0000, 0444, 0222, 0111,
 						 0000, 0444, 0222, 0111, 
 						 0666, 0555, 0333, 0777};
 char * create_temp_files(int modeOfFileToBeCreated) {
-	strcpy(filename[0], "no_perm_file");
-	strcpy(filename[1], "rd_o_file");
-	strcpy(filename[2], "wr_o_file");
-	strcpy(filename[3], "ex_only_file");
-	strcpy(filename[4], "rd_wr_file");
-	strcpy(filename[5], "rd_ex_file");
-	strcpy(filename[6], "wr_ex_file");
-	strcpy(filename[7], "rd_wr_ex_file");
-	strcpy(filename[8], "no_perm_dir");
-	strcpy(filename[9], "rd_o_dir");
-	strcpy(filename[10], "wr_o_dir");
-	strcpy(filename[11], "ex_o_dir");
-	strcpy(filename[12], "rd_wr_dir");
-	strcpy(filename[13], "rd_ex_dir");
-	strcpy(filename[14], "wr_ex_dir");
-	strcpy(filename[15], "rd_wr_ex_dir");
+	strcpy(filename[0], "np");
+	strcpy(filename[1], "ro");
+	strcpy(filename[2], "wo");
+	strcpy(filename[3], "xo");
+	strcpy(filename[4], "rw");
+	strcpy(filename[5], "rx");
+	strcpy(filename[6], "wx");
+	strcpy(filename[7], "rwx");
+	strcpy(filename[8], "np");
+	strcpy(filename[9], "ro");
+	strcpy(filename[10], "wo");
+	strcpy(filename[11], "xo");
+	strcpy(filename[12], "rw");
+	strcpy(filename[13], "rx");
+	strcpy(filename[14], "wx");
+	strcpy(filename[15], "rwx");
 	// int i;
 	struct stat dir = {0};
 	if(stat(directory, &dir) == -1)
@@ -126,6 +126,10 @@ void clean() {
 		sprintf(fp, "%s/%s",  directory, filename[i]);
 		remove(fp);
 	}
+	chmod("/tmp/a", 0777);
+	chmod("/tmp/a/b", 0777);
+	remove("/tmp/a/b/");
+	remove("/tmp/a/");
 	
 
 }
