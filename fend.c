@@ -455,17 +455,11 @@ void sandb_handle_syscall(struct sandbox *sandb) {
           } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
             // printf("No permissions at all...\n");
             handle_no_permission_directory(sandb, READ_ONLY_DIRECTORY, regs.rdi, 0);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
-            handle_no_permission_directory(sandb, WRITE_ONLY_DIRECTORY, regs.rdi, 0);
           } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, WRITE_MODE) == 0)  {
             handle_no_permission_directory(sandb, EXECUTE_ONLY_DIRECTORY, regs.rdi, 0);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0)  {
-            handle_no_permission_directory(sandb, READ_WRITE_DIRECTORY, regs.rdi, 0);
           } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
             handle_no_permission_directory(sandb, READ_EXECUTE_DIRECTORY, regs.rdi, 0);
           }
-
-
       break;
     }
     case SYS_unlinkat: {
@@ -477,17 +471,29 @@ void sandb_handle_syscall(struct sandbox *sandb) {
           } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
             // printf("No permissions at all...\n");
             handle_no_permission_directory(sandb, READ_ONLY_FILE, regs.rsi, 1);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
-            handle_no_permission_directory(sandb, WRITE_ONLY_FILE, regs.rsi, 1);
           } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, WRITE_MODE) == 0)  {
             handle_no_permission_directory(sandb, EXECUTE_ONLY_FILE, regs.rsi, 1);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0)  {
-            handle_no_permission_directory(sandb, READ_WRITE_FILE, regs.rsi, 1);
           } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
             handle_no_permission_directory(sandb, READ_EXECUTE_FILE, regs.rsi, 1);
           }
 
           break; 
+    }
+    case SYS_unlink: {
+          char *str = getFilePathFromSysCall(sandb->child, regs.rdi);
+          // printf("Path for deleting: %s\n", str);
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            // printf("No permissions at all...\n");
+            handle_no_permission_directory(sandb, NO_PERM_FILE, regs.rdi, 1); 
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            // printf("No permissions at all...\n");
+            handle_no_permission_directory(sandb, READ_ONLY_FILE, regs.rdi, 1);
+          } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, WRITE_MODE) == 0)  {
+            handle_no_permission_directory(sandb, EXECUTE_ONLY_FILE, regs.rdi, 1);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
+            handle_no_permission_directory(sandb, READ_EXECUTE_FILE, regs.rdi, 1);
+          }
+          break;
     }
     case SYS_rename:  // coz both have same set of code 
 
@@ -500,32 +506,48 @@ void sandb_handle_syscall(struct sandbox *sandb) {
           } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
             // printf("No permissions at all...\n");
             handle_no_permission_directory(sandb, READ_ONLY_FILE, regs.rdi, 1);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
-            handle_no_permission_directory(sandb, WRITE_ONLY_FILE, regs.rdi, 1);
           } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, WRITE_MODE) == 0)  {
             handle_no_permission_directory(sandb, EXECUTE_ONLY_FILE, regs.rdi, 1);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0)  {
-            handle_no_permission_directory(sandb, READ_WRITE_FILE, regs.rdi, 1);
           } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
             handle_no_permission_directory(sandb, READ_EXECUTE_FILE, regs.rdi, 1);
           }
           // printf("dest: %s\n", getFilePathFromSysCall(sandb->child, regs.rsi));
         break;
       }
-
-    case SYS_fchmodat: {
+    case SYS_renameat:
+    case SYS_renameat2: {
           char *str = getFilePathFromSysCall(sandb->child, regs.rsi);
-          printf("For chmod: %s\n", str);
+          // printf("Path for deleting: %s\n", str);
           if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
             // printf("No permissions at all...\n");
             handle_no_permission_directory(sandb, NO_PERM_FILE, regs.rsi, 1); 
           } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            // printf("No permissions at all...\n");
             handle_no_permission_directory(sandb, READ_ONLY_FILE, regs.rsi, 1);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
-            handle_no_permission_directory(sandb, WRITE_ONLY_FILE, regs.rsi, 1);
-          } else if(hasFilePermission(str, EXECUTE_MODE) == 0)  {
-            //printf("No Execute mode!\n");
-            handle_no_permission_directory(sandb, READ_WRITE_FILE, regs.rsi, 1);
+          } else if(hasFilePermission(str, READ_MODE) == 0 && hasFilePermission(str, WRITE_MODE) == 0)  {
+            handle_no_permission_directory(sandb, EXECUTE_ONLY_FILE, regs.rsi, 1);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
+            handle_no_permission_directory(sandb, READ_EXECUTE_FILE, regs.rsi, 1);
+          }
+        break;
+    }
+
+
+    case SYS_fchmodat: {
+          char *str = getFilePathFromSysCall(sandb->child, regs.rsi);
+          // printf("For chmod: hello  %s  --- %d\n", str, hasFilePermission(str, WRITE_MODE));
+          if((hasFilePermission(str, READ_MODE)) == 0 && hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0) {
+            // printf("No permissions at all...\n");
+            handle_no_permission_directory(sandb, NO_PERM_FILE, regs.rsi, 1); 
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, EXECUTE_MODE) == 0)  {
+            // printf("READ ONLY\n");
+            handle_no_permission_directory(sandb, READ_ONLY_FILE, regs.rsi, 1);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0 && hasFilePermission(str, READ_MODE) == 0)  {
+            // printf("EXECUTEONLY\n");
+            handle_no_permission_directory(sandb, EXECUTE_ONLY_FILE, regs.rsi, 1);
+          } else if(hasFilePermission(str, WRITE_MODE) == 0)  {
+            // printf("No Execute mode!\n");
+            handle_no_permission_directory(sandb, READ_EXECUTE_FILE, regs.rsi, 1);
           } 
         break;
     }
