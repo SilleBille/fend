@@ -10,15 +10,16 @@ Config file structure
 ---------------------
 {mode} {file}
 
-mode is a octal 3 digit number (RWX). 
+mode is a octal 3 digit number (RWX).
+
 Eg. 
+
 777 represents all access to the {file}
+
 000 represents no access to the {file}
 
 
 
 Running
 -------
-./fend {absolute path to the program}
-or
 ./fend {absolute path to the program} [-c {config file name}]
